@@ -1,0 +1,12 @@
+# Configuration (Client Options)
+client=Client Options
+
+# Keys
+key.categories.mterm=mTerm
+key.toggle=Toggle terminal
+
+# GUIs
+container.mterm:console=mTerm Console
+
+# Commands
+commands.mterm.usage=/mterm

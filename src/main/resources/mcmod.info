@@ -1,0 +1,20 @@
+[
+  {
+    "modid": "mterm",
+    "name": "mTerm",
+    "description": "mTerm is a terminal / console view for chat and commands.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "url": "https://mterm.enderwolf.com",
+    "updateUrl": "https://mterm.enderwolf.com/update/versions.json",
+    "authorList": [
+      "Vayner"
+    ],
+    "credits": "Simo415 for the original Minecraft-Console that this is based on",
+    "logoFile": "",
+    "screenshots": [
+    ],
+    "dependencies": [
+    ]
+  }
+]

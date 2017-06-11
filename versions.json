@@ -1,0 +1,10 @@
+{
+    "1.11.2": {
+        "0.0.1.0": "Changelog available at http://mterm.enderwolf.com/1.11.2/mTerm-1.11.2-0.0.1-0-changelog.txt"
+    },
+    "promos": {
+        "1.11.2-latest": "0.0.1.0",
+        "latest": "0.0.1.0"
+    },
+    "homepage": "http://mterm.enderwolf.com/"
+}

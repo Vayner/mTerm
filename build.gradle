@@ -1,0 +1,315 @@
+import groovy.json.JsonException
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+        maven {
+            name = "forge"
+            url = "http://files.minecraftforge.net/maven"
+        }
+        maven {
+            // Required for the curseforge task
+            name = "gradle"
+            url "https://plugins.gradle.org/m2/"
+        }
+        maven {
+            name = "sonatype"
+            url = "https://oss.sonatype.org/content/repositories/snapshots/"
+        }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.2-SNAPSHOT'
+        classpath "gradle.plugin.com.matthewprenger:CurseGradle:1.0.7" // Required for the curseforge task
+        classpath "se.bjurr.gitchangelog:git-changelog-gradle-plugin:1.32"
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'net.minecraftforge.gradle.forge'
+apply plugin: 'com.matthewprenger.cursegradle' // Required for the curseforge task
+apply plugin: 'se.bjurr.gitchangelog.git-changelog-gradle-plugin'
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+def build_type = System.getenv("BUILD_TYPE")
+def build_number = System.getenv("BUILD_NUMBER")
+
+if(!build_type) {
+    build_type = "snapshot"
+}
+
+if(!build_number) {
+    build_number = 0
+}
+
+version = "${minecraft_version}-${mod_version}-${build_number}"
+group = mod_group
+archivesBaseName = mod_artifact_basename
+
+minecraft {
+    version = minecraft_version + "-" + forge_version
+    runDir = "run"
+
+    // Set mod version in code prior to compilation
+    replaceIn "ModReference.java"
+    replace "@mod_version@", "${mod_version}-${build_number}"
+
+    // Set the jar signature in code prior to compilation, if it exists as a build property
+    if (project.hasProperty("mterm_sha1_signature")) {
+        replace "@fingerprint@", project.mterm_sha1_signature
+    }
+
+    // Specify the mcp mappings to use
+    mappings = mcp_mappings_version
+}
+
+jar {
+    manifest {
+        attributes(
+                "Application-Name": archivesBaseName,
+                "Application-Version": version,
+                "Build-type": build_type,
+                "Build-number": build_number,
+        )
+    }
+}
+
+
+dependencies {
+    // you may put jars on which you depend on in ./libs
+    // or you may define them like so..
+    //compile "some.group:artifact:version:classifier"
+    //compile "some.group:artifact:version"
+      
+    // real examples
+    //compile 'com.mod-buildcraft:buildcraft:6.0.8:dev'  // adds buildcraft to the dev env
+    //compile 'com.googlecode.efficient-java-matrix-library:ejml:0.24' // adds ejml to the dev env
+
+    // the 'provided' configuration is for optional dependencies that exist at compile-time but might not at runtime.
+    //provided 'com.mod-buildcraft:buildcraft:6.0.8:dev'
+
+    // the deobf configurations:  'deobfCompile' and 'deobfProvided' are the same as the normal compile and provided,
+    // except that these dependencies get remapped to your current MCP mappings
+    //deobfCompile 'com.mod-buildcraft:buildcraft:6.0.8:dev'
+    //deobfProvided 'com.mod-buildcraft:buildcraft:6.0.8:dev'
+
+    // for more info...
+    // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
+    // http://www.gradle.org/docs/current/userguide/dependency_management.html
+
+}
+
+processResources {
+    // this will ensure that this task is redone when the versions change.
+    inputs.property "version", project.version
+    inputs.property "mcversion", project.minecraft.version
+
+    // replace stuff in mcmod.info, nothing else
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+                
+        // replace version and mcversion
+        expand 'version':project.version, 'mcversion':project.minecraft.version
+    }
+        
+    // copy everything else except the mcmod.info
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+task devJar(type: Jar, dependsOn: 'classes') {
+    from(sourceSets.main.output) {
+        include '**'
+    }
+
+    extension = 'jar'
+    classifier = 'dev'
+}
+
+artifacts {
+    archives devJar
+}
+
+task signJar(type: SignJar, dependsOn: ["jar", "devJar"]) {
+    onlyIf {
+        project.hasProperty('keystore_location')
+    }
+
+    keyStore = project.hasProperty('keystore_location') ? project.getProperty('keystore_location') : "";
+    storePass = project.hasProperty('keystore_password') ? project.getProperty('keystore_password') : "";
+    alias = project.hasProperty('mterm_keystore_alias') ? project.getProperty('mterm_keystore_alias') : "";
+    keyPass = project.hasProperty('keystore_password') ? project.getProperty('keystore_password') : "";
+    inputFile = jar.archivePath
+    outputFile = jar.archivePath
+}
+
+curseforge {
+    apiKey = project.hasProperty('mterm_curseforge_apikey') ? project.mterm_curseforge_apikey : ''
+    project {
+        id = project.hasProperty('mterm_curseforge_projectid') ? project.mterm_curseforge_projectid : '0'
+        releaseType = mod_release_type
+        changelogType = 'text'
+        changelog = file("build/libs/${project.archivesBaseName}-${project.version}-changelog.txt")
+        addArtifact devJar
+    }
+}
+
+/**
+ *  Build the json file that MinecraftForge's Update Checker will use to check for new versions
+ *
+ *  MinecraftForge Update Checker documentation - http://mcforge.readthedocs.io/en/latest/gettingstarted/autoupdate/
+ */
+task buildVersionFile {
+
+    def minecraftVersion = "${minecraft_version}"
+    def modVersion = "${mod_version}.${System.getenv("BUILD_NUMBER") ?: 0}"
+    def isReleaseVersion = project.hasProperty("mod_release_type") && project.property("mod_release_type") == "release"
+    def fileName = "versions.json"
+    def remoteUrl = "http://mterm.enderwolf.com/"
+    def changelogStatement = "Changelog available at " + remoteUrl + minecraftVersion + "/${project.archivesBaseName}-${project.version}-changelog.txt"
+    def localUpdateJson = new HashMap()
+
+    // Grab the remote file so that we can append new entries to it
+    try {
+        def remoteUpdateJson = new JsonSlurper().parse(new URL(remoteUrl + 'update/' + fileName))
+
+        if (remoteUpdateJson instanceof Map) {
+            localUpdateJson.putAll(remoteUpdateJson)
+        }
+    }
+    catch (JsonException e) {}
+
+    // Set homepage
+    localUpdateJson.put("homepage", remoteUrl)
+
+    // Add new mod version to the list of mod versions for this version of Minecraft
+    if (localUpdateJson.get(minecraftVersion) instanceof Map) {
+        ((Map) localUpdateJson.get(minecraftVersion)).put(modVersion, changelogStatement)
+    }
+    else {
+        def modVersionsMap = new HashMap()
+        modVersionsMap.put(modVersion, changelogStatement)
+        localUpdateJson.put(minecraftVersion, modVersionsMap)
+    }
+
+    // Add new versions to the promos list
+    if (localUpdateJson.get("promos") instanceof Map) {
+        ((Map) localUpdateJson.get("promos")).put("latest", modVersion)
+        ((Map) localUpdateJson.get("promos")).put(minecraftVersion + "-latest", modVersion)
+
+        if (isReleaseVersion) {
+            ((Map) localUpdateJson.get("promos")).put("recommended", modVersion)
+            ((Map) localUpdateJson.get("promos")).put(minecraftVersion + "-recommended", modVersion)
+        }
+    }
+    else {
+        def promosMap = new HashMap<String, String>()
+
+        promosMap.put("latest", modVersion)
+        promosMap.put(minecraftVersion + "-latest", modVersion)
+
+        if (isReleaseVersion) {
+            promosMap.put("recommended", modVersion)
+            promosMap.put(minecraftVersion + "-recommended", modVersion)
+        }
+
+        localUpdateJson.put("promos", promosMap)
+    }
+
+    // Output new versions file
+    def localUpdateFile = new File(fileName)
+    if (!localUpdateFile.exists()) {
+        localUpdateFile.createNewFile()
+    }
+    localUpdateFile.setText(JsonOutput.prettyPrint(JsonOutput.toJson(localUpdateJson)))
+}
+
+/**
+ * Generate a changelog file from GitHub commits
+ *
+ * See: https://github.com/tomasbjerre/git-changelog-gradle-plugin
+ */
+task makeChangelog(type: se.bjurr.gitchangelog.plugin.gradle.GitChangelogTask) {
+    filePath = "changelog.html"
+    untaggedName = "Current release ${mod_version}"
+    templateContent = """
+<h1>Changelog for mTerm</h1>
+<h2>Version ${mod_version} for Minecraft ${project.minecraft.version}</h2>
+<ul>
+{{#tags}}
+<li><h3>{{name}}</h3>
+<hr/>
+<ul>
+{{#commits}}
+<li>{{{message}}}</li>
+{{/commits}}
+</ul>
+{{/tags}}
+</ul>
+    """
+}
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            if (project.hasProperty("forgemaven_url")) {
+                logger.info('Publishing to files server')
+                repository(url: project.getProperty("forgemaven_url")) {
+                    authentication(userName: project.properties.forgemaven_username ?: "", password: project.properties.forgemaven_password ?: "")
+                }
+            }
+            else {
+                // local repo folder. Might wanna just use gradle install if you wanna send it to maven-local
+                repository(url: 'file://localhost/' + project.file('repo').getAbsolutePath())
+            }
+
+            pom {
+                groupId = project.group
+                version = project.version
+                artifactId = project.archivesBaseName
+            }
+
+            pom.project {
+                name project.archivesBaseName
+                packaging 'jar'
+                description 'mTerm'
+                url 'https://github.com/vayner/mTerm/'
+
+                scm {
+                    url 'https://github.com/vayner/mTerm/'
+                    connection 'scm:git:git://github.com/vayner/mTerm.git'
+                    developerConnection 'scm:git:git@github.com/vayner/mTerm.git'
+                }
+
+                issueManagement {
+                    system 'github'
+                    url 'https://github.com/vayner/mTerm/issues'
+                }
+
+                licenses {
+                    license {
+                        name 'GNU Lesser General Public License 3.0'
+                        url 'https://www.gnu.org/licenses/lgpl-3.0.txt'
+                        distribution 'repo'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id 'Vayner'
+                        name 'Vayner'
+                        roles {
+                            role 'developer'
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
